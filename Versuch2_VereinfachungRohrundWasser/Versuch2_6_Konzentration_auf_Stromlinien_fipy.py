@@ -16,6 +16,8 @@ except ImportError as exc:
         "FiPy is not installed. Install with: python3 -m pip install fipy"
     ) from exc
 
+
+
 # -----------------------------
 # Parameters (geometry + fluid)
 # -----------------------------
