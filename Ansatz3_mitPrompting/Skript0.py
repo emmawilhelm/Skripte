@@ -12,38 +12,10 @@ t = 0.80     # Wanddicke / Plattendicke der Störstelle
 
 R = D / 2.0          # Rohrradius
 r_or = d / 2.0       # Orifice-Radius
-s = 0.15        # Rohrwandstärke in m
-R_out = R + s
 
 # Orifice-Platte als Blockierelement mit Loch:
 x0 = x_or - t / 2.0
 x1 = x_or + t / 2.0
-
-from dataclasses import dataclass
-
-# -----------------------------
-# Medium: newtonsches Fluid (nur Definition, keine Strömungsberechnung)
-# -----------------------------
-@dataclass(frozen=True)
-class NewtonianFluid:
-    name: str
-    rho: float       # Dichte [kg/m^3]
-    mu: float        # dyn. Viskosität [Pa*s]
-    Q: float         # Volumenstrom [m^3/s]
-    p_in: float      # Druck bei x=0 [Pa]
-
-# Gegebene Fluiddaten
-fluid = NewtonianFluid(
-    name="Newtonian fluid",
-    rho=1440.0,
-    mu=1.0,
-    Q=0.0097,
-    p_in=4e5  # 4 bar = 4e5 Pa
-)
-
-# Optional: kurze Konsistenzchecks (keine Physik, nur Eingaben plausibel)
-if fluid.rho <= 0 or fluid.mu <= 0 or fluid.Q <= 0 or fluid.p_in <= 0:
-    raise ValueError("Fluidparameter müssen > 0 sein.")
 
 # -----------------------------
 # Plot
@@ -51,24 +23,8 @@ if fluid.rho <= 0 or fluid.mu <= 0 or fluid.Q <= 0 or fluid.p_in <= 0:
 fig, ax = plt.subplots(figsize=(12, 4))
 
 # Rohrwände (2D-Schnitt, symmetrisch um y=0, beide Seiten anzeigen)
-from matplotlib.patches import Rectangle
-
-# Rohrwand (oben/unten) als gefüllte Rechtecke
-pipe_color = "0.85"
-
-# obere Wand: von y=R bis y=R_out
-ax.add_patch(Rectangle((0, R), L, s, facecolor=pipe_color, edgecolor="k", linewidth=1))
-
-# untere Wand: von y=-R_out bis y=-R
-ax.add_patch(Rectangle((0, -R_out), L, s, facecolor=pipe_color, edgecolor="k", linewidth=1))
-
-# Innenkontur optional noch als Linie (macht's klarer)
-ax.plot([0, L], [ R,  R], color="k", linewidth=1)
-ax.plot([0, L], [-R, -R], color="k", linewidth=1)
-
-# Außenkontur optional
-ax.plot([0, L], [ R_out,  R_out], color="k", linewidth=1)
-ax.plot([0, L], [-R_out, -R_out], color="k", linewidth=1)
+ax.plot([0, L], [ R,  R], linewidth=2)
+ax.plot([0, L], [-R, -R], linewidth=2)
 
 # Achse (Symmetrieachse) als gestrichelte Linie
 ax.plot([0, L], [0, 0], linestyle="--", linewidth=1)
@@ -93,7 +49,7 @@ ax.text(x_or, R*1.03, "x = 3.0 m (Messblende)", ha="center", va="bottom")
 
 # Grenzen & Darstellung
 ax.set_xlim(-0.2, L + 0.2)
-ax.set_ylim(-R_out*1.15, R_out*1.15)
+ax.set_ylim(-R*1.15, R*1.15)
 ax.set_aspect("equal", adjustable="box")
 ax.set_xlabel("x [m]")
 ax.set_ylabel("y [m] (radiale Richtung, Schnitt durch Achse)")
