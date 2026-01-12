@@ -73,6 +73,20 @@ ax.plot([0, L], [-R_out, -R_out], color="k", linewidth=1)
 # Achse (Symmetrieachse) als gestrichelte Linie
 ax.plot([0, L], [0, 0], linestyle="--", linewidth=1)
 
+# -----------------------------
+# Fluid im Rohr (statisch, vollständig gefüllt)
+# -----------------------------
+fluid_color = "#cfe8ff"  # helles Blau
+
+ax.add_patch(
+    Rectangle(
+        (0, -R), L, 2 * R,
+        facecolor=fluid_color,
+        edgecolor="none",
+        zorder=0
+    )
+)
+
 # Messblende: zwei Rechtecke (oben/unten), die den Querschnitt blockieren,
 # mit einer runden Öffnung (im 2D-Schnitt: "Schlitz" von -r_or bis +r_or)
 plate_color = "0.75"
@@ -92,7 +106,8 @@ ax.axvline(x_or, linestyle=":", linewidth=1)
 ax.text(x_or, R*1.03, "x = 3.0 m (Messblende)", ha="center", va="bottom")
 
 # Grenzen & Darstellung
-ax.set_xlim(-0.2, L + 0.2)
+x_info = L + 0.6 * L   # Platz rechts neben dem Rohr
+ax.set_xlim(-0.2, x_info)
 ax.set_ylim(-R_out*1.15, R_out*1.15)
 ax.set_aspect("equal", adjustable="box")
 ax.set_xlabel("x [m]")
@@ -106,8 +121,26 @@ info = (
     f"Orifice bei x = {x_or:.2f} m\n"
     f"d = {d:.2f} m, t = {t:.2f} m"
 )
-ax.text(0.02, 0.98, info, transform=ax.transAxes, ha="left", va="top",
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+ax.text(
+    L + 0.1 * L, R_out,
+    info,
+    ha="left", va="top",
+    bbox=dict(boxstyle="round", facecolor="white", alpha=0.9)
+)
+
+fluid_info = (
+    f"Fluid: {fluid.name}\n"
+    f"rho = {fluid.rho:.0f} kg/m³\n"
+    f"mu = {fluid.mu:.2f} Pa·s\n"
+    f"Q = {fluid.Q:.4f} m³/s\n"
+    f"p(x=0) = {fluid.p_in/1e5:.2f} bar"
+)
+ax.text(
+    L + 0.1 * L, -R_out,
+    fluid_info,
+    ha="left", va="bottom",
+    bbox=dict(boxstyle="round", facecolor="white", alpha=0.9)
+)
 
 plt.tight_layout()
 plt.show()
