@@ -135,55 +135,58 @@ ax.axvline(x_or, linestyle=":", linewidth=1, zorder=6)
 ax.text(x_or, R_out * 1.03, "x = 3.0 m (Messblende)", ha="center", va="bottom", zorder=6)
 
 # -----------------------------
-# Geschwindigkeitsvektoren (nur x-Richtung)
-# - x alle 0.5 m, ohne x=0 und x=6
-# - y-Punkte: ±dy, ±2dy, ... innerhalb der jeweiligen freien Strömungsradius
-# - No-slip: v=0 an Rohrwand (|y|=R) und an Orifice-Wand (|y|=r_or innerhalb [x0,x1])
+# Streamlines statt Quiver
 # -----------------------------
-dy_pipe = 0.43
-dy_orif = 0.261
-u_vis = 0.2  # reine Darstellungsgröße für Pfeile (ohne physikalische Bedeutung)
 
-# x-Samples: 0.5 ... 5.5
-x_samples = np.arange(0.5, L, 0.5)
+# 1) Gitter definieren
+nx, ny = 300, 140
+xg = np.linspace(0.0, L, nx)
+yg = np.linspace(-R, R, ny)
+XX, YY = np.meshgrid(xg, yg)
 
-X, Y, U, V = [], [], [], []
+# 2) "Freier Radius" als Funktion von x (sprunghaft -> besser weich machen)
+#    damit Streamlines nicht an einer Sprungstelle "knicken".
+eps = 0.03  # Glättungslänge [m] (nur optisch)
+def smooth_step(x, a, b, w):
+    # ~1 in [a,b], sonst ~0 (weiche Kanten)
+    return 0.5*(np.tanh((x-a)/w) - np.tanh((x-b)/w))
 
-for x in x_samples:
-    in_orifice = (x0 <= x <= x1)
+in_or = smooth_step(XX, x0, x1, eps)           # 0..1
+R_free = (1.0 - in_or) * R + in_or * r_or      # freier Radius (weich)
 
-    # freier Radius für den Fluidbereich an dieser Stelle
-    R_free = r_or if in_orifice else R
-    dy = dy_orif if in_orifice else dy_pipe
+# 3) Mittlere Geschwindigkeit u_mean(x) (für Visualisierung)
+#    (Hier weiter mit deiner axisymmetrischen Fläche A = pi R^2)
+A = np.pi * (R_free**2)
+u_mean = fluid.Q / A
 
-    # Innenpunkte: ±dy, ±2dy, ... bis <= R_free
-    k_max = int(np.floor(R_free / dy))
-    y_vals = []
-    for k in range(1, k_max + 1):
-        y_vals.extend([k * dy, -k * dy])
+# 4) Stromfunktion psi(x,y) wählen
+#    Parabolisches Profil in y, das an der Wand auf 0 geht:
+#    u = u_mean*(1 - (y/R_free)^2)
+psi = u_mean * (YY - (YY**3) / (3.0 * (R_free**2) + 1e-12))
 
-    # Innenpunkte: Plug-Flow (konstante u(x))
-    u = u_of_x(x)
-    for y in y_vals:
-        # Sicherheit: nur innerhalb Fluidbereich
-        if abs(y) <= R_free + 1e-12:
-            X.append(float(x))
-            Y.append(float(y))
-            U.append(u_vis)
-            V.append(0.0)
+# 5) u,v aus psi ableiten (numerisch)
+dx = xg[1] - xg[0]
+dy = yg[1] - yg[0]
+dpsi_dy, dpsi_dx = np.gradient(psi, dy, dx)   # Achtung Reihenfolge: (y,x)
+Ufield = dpsi_dy
+Vfield = -dpsi_dx
 
+# 6) Feste Bereiche maskieren: außerhalb Fluid / Platte
+solid = (np.abs(YY) > R_free)  # außerhalb freier Querschnitt
+# zusätzlich: im Plattenbereich nur |y|<=r_or zulassen (hart)
+solid |= ((XX >= x0) & (XX <= x1) & (np.abs(YY) > r_or))
 
-# Pfeile zeichnen
-# Hinweis: Die realen Geschwindigkeiten sind sehr klein -> für sichtbare Pfeile skalieren wir stark.
-# Die Pfeile zeigen dennoch proportional in x-Richtung; "scale" ist ein Darstellungsfaktor.
-ax.quiver(
-    np.array(X), np.array(Y),
-    np.array(U), np.array(V),
-    angles="xy",
-    scale_units="xy",
-    scale=1.0,     # keine Skalierung mehr
-    width=0.003,
-    zorder=10
+Uplot = np.ma.array(Ufield, mask=solid)
+Vplot = np.ma.array(Vfield, mask=solid)
+
+# 7) Streamplot zeichnen
+ax.streamplot(
+    xg, yg, Uplot, Vplot,
+    density=1.6,      # mehr/weniger Linien
+    linewidth=1.2,
+    arrowsize=1.2,
+    minlength=0.05,
+    zorder=9
 )
 
 # -----------------------------

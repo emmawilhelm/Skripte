@@ -134,56 +134,110 @@ ax.add_patch(lower_plate)
 ax.axvline(x_or, linestyle=":", linewidth=1, zorder=6)
 ax.text(x_or, R_out * 1.03, "x = 3.0 m (Messblende)", ha="center", va="bottom", zorder=6)
 
+
 # -----------------------------
-# Geschwindigkeitsvektoren (nur x-Richtung)
-# - x alle 0.5 m, ohne x=0 und x=6
-# - y-Punkte: ±dy, ±2dy, ... innerhalb der jeweiligen freien Strömungsradius
-# - No-slip: v=0 an Rohrwand (|y|=R) und an Orifice-Wand (|y|=r_or innerhalb [x0,x1])
+# OPTION 2: Streamlines mit geglättetem u(x) (Δx = 0.05 m)
+# - u(x) wird an x0 und x1 weich überblendet, damit v = -dpsi/dx definiert ist
+# - psi(x,y) = u(x)*y
+# - u,v werden aus psi abgeleitet: u = dpsi/dy, v = -dpsi/dx
+# - Streamlines werden in Wandnähe maskiert (eps), damit keine Linie die Wand berührt.
 # -----------------------------
-dy_pipe = 0.43
-dy_orif = 0.261
-u_vis = 0.2  # reine Darstellungsgröße für Pfeile (ohne physikalische Bedeutung)
+nx, ny = 350, 180
+x_grid = np.linspace(0.0, L, nx)
+y_grid = np.linspace(-R, R, ny)
+Xg, Yg = np.meshgrid(x_grid, y_grid)
 
-# x-Samples: 0.5 ... 5.5
-x_samples = np.arange(0.5, L, 0.5)
+# Sicherheitsabstand zu Wänden
+eps = 0.02  # [m]
 
-X, Y, U, V = [], [], [], []
+# Glättungsbreite
+dx_smooth = 0.05  # [m] wie von dir vorgegeben
 
-for x in x_samples:
-    in_orifice = (x0 <= x <= x1)
+A_pipe = np.pi * (D**2) / 4.0
+A_orif = np.pi * (d**2) / 4.0
+u_pipe = fluid.Q / A_pipe
+u_orif = fluid.Q / A_orif
 
-    # freier Radius für den Fluidbereich an dieser Stelle
-    R_free = r_or if in_orifice else R
-    dy = dy_orif if in_orifice else dy_pipe
+def smooth_step(x, x_center, width):
+    """
+    Glatter Übergang 0->1 via tanh.
+    width ~ Übergangshalbbreite; größer -> weicher.
+    """
+    return 0.5 * (1.0 + np.tanh((x - x_center) / width))
 
-    # Innenpunkte: ±dy, ±2dy, ... bis <= R_free
-    k_max = int(np.floor(R_free / dy))
-    y_vals = []
-    for k in range(1, k_max + 1):
-        y_vals.extend([k * dy, -k * dy])
+# u(x): von Rohr zu Orifice bei x0, zurück bei x1
+# s0 steigt bei x0 von 0->1, s1 steigt bei x1 von 0->1
+s0 = smooth_step(x_grid, x0, dx_smooth)
+s1 = smooth_step(x_grid, x1, dx_smooth)
 
-    # Innenpunkte: Plug-Flow (konstante u(x))
-    u = u_of_x(x)
-    for y in y_vals:
-        # Sicherheit: nur innerhalb Fluidbereich
-        if abs(y) <= R_free + 1e-12:
-            X.append(float(x))
-            Y.append(float(y))
-            U.append(u_vis)
-            V.append(0.0)
+# In Orifice-Plateau: s_plateau ~ 1 zwischen x0 und x1, ~0 außerhalb
+s_plateau = np.clip(s0 - s1, 0.0, 1.0)
 
+# u(x) geglättet
+u1d = u_pipe + (u_orif - u_pipe) * s_plateau  # 1D
 
-# Pfeile zeichnen
-# Hinweis: Die realen Geschwindigkeiten sind sehr klein -> für sichtbare Pfeile skalieren wir stark.
-# Die Pfeile zeigen dennoch proportional in x-Richtung; "scale" ist ein Darstellungsfaktor.
-ax.quiver(
-    np.array(X), np.array(Y),
-    np.array(U), np.array(V),
-    angles="xy",
-    scale_units="xy",
-    scale=1.0,     # keine Skalierung mehr
-    width=0.003,
-    zorder=10
+# Stromfunktion psi(x,y) = u(x)*y
+psi = np.outer(y_grid, u1d)  # shape (ny, nx)
+
+# Ableitungen (numerisch) -> u,v
+dy = y_grid[1] - y_grid[0]
+dx = x_grid[1] - x_grid[0]
+
+# np.gradient gibt Ableitungen entlang Achsen:
+dpsi_dy, dpsi_dx = np.gradient(psi, dy, dx, edge_order=2)
+
+Ug = dpsi_dy            # u = ∂psi/∂y
+Vg = -dpsi_dx           # v = -∂psi/∂x
+
+# Fluidmaske (inkl. "nicht an Wand berühren")
+fluid_mask = (np.abs(Yg) < (R - eps))
+orifice_region = (Xg >= x0) & (Xg <= x1)
+fluid_mask_orifice = orifice_region & (np.abs(Yg) < (r_or - eps))
+fluid_mask = (fluid_mask & ~orifice_region) | fluid_mask_orifice
+
+Ug_plot = np.where(fluid_mask, Ug, np.nan)
+Vg_plot = np.where(fluid_mask, Vg, np.nan)
+
+# -----------------------------
+# Farbfeld: Geschwindigkeitsbetrag |u|
+# (fixe Skala: 0 .. u_orif)
+# -----------------------------
+speed = np.sqrt(Ug_plot**2 + Vg_plot**2)
+
+# Referenzwert für feste Farbskala (max. erwartete axiale Geschwindigkeit im Orifice)
+u_orif = fluid.Q / (np.pi * (d**2) / 4.0)
+
+c = ax.pcolormesh(
+    x_grid, y_grid, speed,
+    shading="auto",
+    cmap="viridis",
+    vmin=0.0,
+    vmax=u_orif,
+    alpha=0.75,
+    zorder=1
+)
+
+cb = plt.colorbar(c, ax=ax, pad=0.02)
+cb.set_label(r"$|\vec{u}|$ [m/s]")
+
+speed = np.sqrt(Ug_plot**2 + Vg_plot**2)
+
+c = ax.pcolormesh(
+    x_grid, y_grid, speed,
+    shading="auto",
+    alpha=0.7,   # Durchsichtigkeit, damit Geometrie/Streamlines sichtbar bleiben
+    zorder=1
+)
+cb = plt.colorbar(c, ax=ax, pad=0.02)
+cb.set_label("|u| [m/s]")
+
+ax.streamplot(
+    x_grid, y_grid,
+    Ug_plot, Vg_plot,
+    density=1.2,
+    linewidth=1.0,
+    arrowsize=1.0,
+    zorder=12
 )
 
 # -----------------------------

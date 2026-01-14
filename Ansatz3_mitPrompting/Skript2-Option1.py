@@ -134,56 +134,61 @@ ax.add_patch(lower_plate)
 ax.axvline(x_or, linestyle=":", linewidth=1, zorder=6)
 ax.text(x_or, R_out * 1.03, "x = 3.0 m (Messblende)", ha="center", va="bottom", zorder=6)
 
+
 # -----------------------------
-# Geschwindigkeitsvektoren (nur x-Richtung)
-# - x alle 0.5 m, ohne x=0 und x=6
-# - y-Punkte: ±dy, ±2dy, ... innerhalb der jeweiligen freien Strömungsradius
-# - No-slip: v=0 an Rohrwand (|y|=R) und an Orifice-Wand (|y|=r_or innerhalb [x0,x1])
+# OPTION 1: Streamlines mit hartem Sprung (v=0 gesetzt)
+# - u(x,y) = Q/A(x), unabhängig von y (Plug im freien Querschnitt)
+# - v(x,y) = 0
+# - psi wird nur zur Konsistenz gesetzt: psi = u(x)*y
+#   (an Sprungstellen ist dpsi/dx nicht definiert -> v wird explizit 0 gehalten)
+# - Streamlines werden in Wandnähe maskiert (eps), damit keine Linie die Wand berührt.
 # -----------------------------
-dy_pipe = 0.43
-dy_orif = 0.261
-u_vis = 0.2  # reine Darstellungsgröße für Pfeile (ohne physikalische Bedeutung)
+nx, ny = 350, 180
+x_grid = np.linspace(0.0, L, nx)
+y_grid = np.linspace(-R, R, ny)
+Xg, Yg = np.meshgrid(x_grid, y_grid)
 
-# x-Samples: 0.5 ... 5.5
-x_samples = np.arange(0.5, L, 0.5)
+# Sicherheitsabstand zu Wänden (damit Streamlines die Wand nicht berühren)
+eps = 0.02  # [m] (kannst du bei Bedarf kleiner/größer setzen)
 
-X, Y, U, V = [], [], [], []
+def u_piecewise(x):
+    # harter Sprung
+    A = np.pi * (d**2) / 4.0 if (x0 <= x <= x1) else np.pi * (D**2) / 4.0
+    return fluid.Q / A
 
-for x in x_samples:
-    in_orifice = (x0 <= x <= x1)
+# u(x) als 2D-Feld (nur x-abhängig)
+u1d = np.array([u_piecewise(x) for x in x_grid])
+Ug = np.tile(u1d, (ny, 1))
 
-    # freier Radius für den Fluidbereich an dieser Stelle
-    R_free = r_or if in_orifice else R
-    dy = dy_orif if in_orifice else dy_pipe
+# v = 0 überall im Fluidgebiet
+Vg = np.zeros_like(Ug)
 
-    # Innenpunkte: ±dy, ±2dy, ... bis <= R_free
-    k_max = int(np.floor(R_free / dy))
-    y_vals = []
-    for k in range(1, k_max + 1):
-        y_vals.extend([k * dy, -k * dy])
+# psi optional (nicht zwingend für streamplot benötigt, aber wie von dir gewünscht)
+# psi(x,y) = u(x) * y
+psi = Ug * Yg
 
-    # Innenpunkte: Plug-Flow (konstante u(x))
-    u = u_of_x(x)
-    for y in y_vals:
-        # Sicherheit: nur innerhalb Fluidbereich
-        if abs(y) <= R_free + 1e-12:
-            X.append(float(x))
-            Y.append(float(y))
-            U.append(u_vis)
-            V.append(0.0)
+# Fluidmaske:
+# - außerhalb Rohr: |y| >= R-eps -> maskieren
+# - im Messblendenbereich: nur |y| <= r_or-eps ist Fluid; darüber Platte -> maskieren
+fluid_mask = (np.abs(Yg) < (R - eps))  # innen im Rohr
+orifice_region = (Xg >= x0) & (Xg <= x1)
+fluid_mask_orifice = orifice_region & (np.abs(Yg) < (r_or - eps))
 
+# Gesamte Fluidmaske: im Orifice-Bereich gilt engere Bedingung
+fluid_mask = (fluid_mask & ~orifice_region) | fluid_mask_orifice
 
-# Pfeile zeichnen
-# Hinweis: Die realen Geschwindigkeiten sind sehr klein -> für sichtbare Pfeile skalieren wir stark.
-# Die Pfeile zeigen dennoch proportional in x-Richtung; "scale" ist ein Darstellungsfaktor.
-ax.quiver(
-    np.array(X), np.array(Y),
-    np.array(U), np.array(V),
-    angles="xy",
-    scale_units="xy",
-    scale=1.0,     # keine Skalierung mehr
-    width=0.003,
-    zorder=10
+# Maskieren: außerhalb Fluidgebiet keine Werte -> keine Streamlines
+Ug_plot = np.where(fluid_mask, Ug, np.nan)
+Vg_plot = np.where(fluid_mask, Vg, np.nan)
+
+# Streamlines zeichnen
+ax.streamplot(
+    x_grid, y_grid,
+    Ug_plot, Vg_plot,
+    density=1.2,      # Linienstreuung (nach Geschmack)
+    linewidth=1.0,
+    arrowsize=1.0,
+    zorder=12
 )
 
 # -----------------------------
