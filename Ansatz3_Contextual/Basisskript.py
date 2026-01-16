@@ -151,16 +151,14 @@ def build_velocity_field(
     u_mean_mesh = np.tile(u_mean_x, (ny, 1))
     u[outer_ring] = 0.01 * u_mean_mesh[outer_ring]
 
-    # du/dx (row-wise), ignoring NaNs outside
-    du_dx = np.full_like(u, np.nan, dtype=float)
-    for j in range(ny):
-        row = u[j, :]
-        valid = np.isfinite(row)
-        if np.count_nonzero(valid) < 3:
-            continue
-        idx = np.where(valid)[0]
-        i0, i1 = idx[0], idx[-1]
-        du_dx[j, i0:i1 + 1] = np.gradient(row[i0:i1 + 1], x[i0:i1 + 1])
+    # ------------------------------------------------------------
+    # Robustes du/dx: außerhalb der Domäne 0 füllen, dann Gradient,
+    # danach wieder maskieren. Verhindert "Löcher" (NaNs) im Inneren.
+    # ------------------------------------------------------------
+    u_f = u.copy()
+    u_f[~inside] = 0.0  # nur für Gradient-Berechnung
+    du_dx = np.gradient(u_f, x, axis=1)
+    du_dx[~inside] = np.nan
 
     # ------------------------------------------------------------
     # v aus Kontinuität: dv/dy = -du/dx
@@ -203,6 +201,22 @@ def build_velocity_field(
          # 3) Mittelwert, um beide Wandbedingungen "gleich" zu behandeln
         v[:, i] = 0.5 * (v_top + v_bot)
 
+    # ------------------------------------------------------------
+    # NaN-"Löcher" innerhalb der Domäne schließen
+    # (streamplot bricht sonst dort ab)
+    # ------------------------------------------------------------
+    bad_u = inside & ~np.isfinite(u)
+    bad_v = inside & ~np.isfinite(v)
+
+    if np.any(bad_u) or np.any(bad_v):
+        print("WARN: NaNs innerhalb 'inside' gefunden -> werden auf 0 gesetzt:",
+            int(np.sum(bad_u)), int(np.sum(bad_v)))
+
+    u[bad_u] = 0.0
+    v[bad_v] = 0.0
+
+    print("Finite-Anteil u innerhalb:", np.mean(np.isfinite(u[inside])))
+    print("Finite-Anteil v innerhalb:", np.mean(np.isfinite(v[inside])))
     # Optional: numerisches Rauschen sehr nah an Wänden abschwächen (kann helfen)
     # v[np.abs(v) < 1e-12] = 0.0
 
@@ -320,12 +334,14 @@ def main():
     cbar.set_label("|u| [m/s]")
 
     # Streamplot (fill masked with 0 just for plotting)
-    u_plot = u
-    v_plot = v
+    u_plot = u.filled(np.nan)
+    v_plot = v.filled(np.nan)
 
     x0 = 0.05
     ys = np.linspace(-R_pipe * 0.95, R_pipe * 0.95, 28)
     start_points = np.column_stack([np.full_like(ys, x0), ys])
+
+    print("STREAMPLOT VERSION: NaN + start_points aktiv")
 
     ax.streamplot(
         X, Y, 
@@ -335,8 +351,9 @@ def main():
         linewidth=0.8,
         arrowsize=1.1,
         minlength=0.2,    # verhindert sehr kurze Abbrüche
-        maxlength=10.0,   # erlaubt lange Linien
-        zorder=3
+        maxlength=30.0,   # erlaubt lange Linien
+        zorder=3,
+        broken_streamlines=False
     )
 
     ax.set_title("Rohrströmung mit Störstelle (Sigmoid-Glättung, Poiseuille + Kontinuität)")
