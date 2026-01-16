@@ -234,6 +234,9 @@ def main():
         ny=260,
     )
 
+    # Betrag der Geschwindigkeit (masked bleibt erhalten)
+    speed = np.ma.sqrt(u**2 + v**2)
+
     print("Diagnosewerte:")
     print(f"Mittlere Geschwindigkeit im Rohr:     {diag['v_pipe_mean']:.6f} m/s")
     print(f"Mittlere Geschwindigkeit in Orifice:  {diag['v_orifice_mean']:.6f} m/s")
@@ -279,6 +282,21 @@ def main():
         zorder=5
     )
 
+    # -------------------------------------------------
+    # 2.5) Farbverlauf: Betrag der Geschwindigkeit
+    #      -> unter Streamlines und unter der Platte
+    # -------------------------------------------------
+    # pcolormesh ist robust für regelmäßige Gitter
+    pcm = ax.pcolormesh(
+        X, Y, speed,
+        shading="auto",
+        alpha=0.9,
+        zorder=0
+    )
+
+    cbar = plt.colorbar(pcm, ax=ax, pad=0.02)
+    cbar.set_label("|u| [m/s]")
+
     # Streamplot (fill masked with 0 just for plotting)
     u_plot = np.where(u.mask, 0.0, u.data)
     v_plot = np.where(v.mask, 0.0, v.data)
@@ -287,7 +305,8 @@ def main():
         X, Y, u_plot, v_plot,
         density=1.8,
         linewidth=0.8,
-        arrowsize=1.1
+        arrowsize=1.1,
+        zorder=3
     )
 
     ax.set_title("Rohrströmung mit Störstelle (Sigmoid-Glättung, Poiseuille + Kontinuität)")
