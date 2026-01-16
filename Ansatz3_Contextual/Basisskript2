@@ -1,0 +1,214 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ============================================================
+# Vorgaben (aus dem bereitgestellten Dokument)
+# ============================================================
+D_pipe = 4.30       # [m] Rohrdurchmesser
+L_pipe = 6.00       # [m] Rohrlaenge
+d_orifice = 2.61    # [m] Durchmesser der Oeffnung (Orifice)
+t_orifice = 0.8     # [m] Dicke der Stoerstelle (Platten-/Blenden-Dicke)
+xS = L_pipe / 2.0   # [m] Position der Stoerstelle
+
+rho = 1440.0        # [kg/m^3] Dichte
+mu = 1.0            # [Pa*s] dynamische Viskositaet
+Q = 0.0097          # [m^3/s] Volumenstrom
+
+# Glaettung: 0,3*D = 1,29 m vor und nach der Stoerstelle
+L_smooth = 0.3 * D_pipe  # [m]
+
+# ============================================================
+# Diskretisierung (du kannst hier eine der vorgeschlagenen Optionen einsetzen)
+# ============================================================
+nx = 500
+ny = 220
+
+# symmetrischer Laengsschnitt
+R_pipe = D_pipe / 2.0
+y_min, y_max = -R_pipe, R_pipe
+
+# ============================================================
+# Hilfsfunktionen
+# ============================================================
+def sigmoid(z):
+    z = np.clip(z, -60.0, 60.0)
+    return 1.0 / (1.0 + np.exp(-z))
+
+def smooth_blend(x, x0, x1, k=10.0):
+    """
+    Glatter Uebergang von 0->1 zwischen x0..x1 mittels Sigmoid.
+    """
+    xm = 0.5 * (x0 + x1)
+    half = 0.5 * (x1 - x0)
+    return sigmoid(k * (x - xm) / max(half, 1e-12))
+
+def cumtrapz_1d(y, x):
+    """
+    Kumulative Trapez-Integration (wie scipy.integrate.cumtrapz, aber nur NumPy).
+    Liefert Array gleicher Laenge, mit initial=0.
+    """
+    out = np.zeros_like(y, dtype=float)
+    if len(y) < 2:
+        return out
+    dx = np.diff(x)
+    area = 0.5 * (y[1:] + y[:-1]) * dx
+    out[1:] = np.cumsum(area)
+    return out
+
+def opening_radius_profile(x):
+    """
+    Effektiver Oeffnungsradius R_open(x):
+    - weit weg von der Stoerstelle: R_pipe (keine Blockade)
+    - in der Platte: R_orifice
+    - vor/nach der Platte: sigmoid-Glaettung ueber L_smooth
+    """
+    R_orifice = d_orifice / 2.0
+
+    x_in = xS - t_orifice / 2.0
+    x_out = xS + t_orifice / 2.0
+
+    # Glaettungsbereiche
+    x_blend_in_start = x_in - L_smooth
+    x_blend_in_end   = x_in
+    x_blend_out_start = x_out
+    x_blend_out_end   = x_out + L_smooth
+
+    b_in = smooth_blend(x, x_blend_in_start, x_blend_in_end)    # 0->1
+    b_out = smooth_blend(x, x_blend_out_start, x_blend_out_end) # 0->1
+
+    R_open = np.full_like(x, R_pipe, dtype=float)
+
+    # Vor der Platte: R_pipe -> R_orifice
+    mask_in = (x >= x_blend_in_start) & (x <= x_blend_in_end)
+    R_open[mask_in] = (1.0 - b_in[mask_in]) * R_pipe + b_in[mask_in] * R_orifice
+
+    # In der Platte: konstant R_orifice
+    mask_plate = (x > x_blend_in_end) & (x < x_blend_out_start)
+    R_open[mask_plate] = R_orifice
+
+    # Nach der Platte: R_orifice -> R_pipe
+    mask_out = (x >= x_blend_out_start) & (x <= x_blend_out_end)
+    R_open[mask_out] = (1.0 - b_out[mask_out]) * R_orifice + b_out[mask_out] * R_pipe
+
+    return R_open
+
+# ============================================================
+# Gitter
+# ============================================================
+x = np.linspace(0.0, L_pipe, nx)
+y = np.linspace(y_min, y_max, ny)
+X, Y = np.meshgrid(x, y, indexing="xy")
+
+# ============================================================
+# Geometrie: Fluidbereich = innerhalb Rohr UND innerhalb Oeffnung (in Stoerstellenzone)
+# ============================================================
+R_open_x = opening_radius_profile(x)           # 1D
+R_open_2D = np.interp(X, x, R_open_x)          # 2D
+
+# Rohrinnenraum
+in_pipe = np.abs(Y) <= R_pipe
+
+# Undurchlaessige Wand durch Orifice/Platte:
+# Wir modellieren die Blockade ueber den effektiven Oeffnungsradius R_open(x).
+# Fluid darf nur dort sein, wo |y| <= R_open(x) (und natuerlich im Rohr).
+in_opening = np.abs(Y) <= R_open_2D
+
+fluid = in_pipe & in_opening
+
+# ============================================================
+# u-Profil (Poiseuille) bezogen auf den lokalen "freien" Radius (R_open)
+# Q konstant -> u_mean(x) = Q / A_open(x), A_open = pi * R_open^2
+# u(y) = u_max(x) * (1 - (y/R_open)^2) im Fluid
+# ============================================================
+A_open_x = np.pi * (R_open_x ** 2)
+u_mean_x = Q / A_open_x
+u_max_x = 2.0 * u_mean_x
+
+# Reynolds (Info)
+Re_pipe = rho * (Q / (np.pi * (R_pipe ** 2))) * D_pipe / mu
+Re_open = rho * (Q / (np.pi * ((d_orifice/2.0) ** 2))) * d_orifice / mu
+print(f"Re_rohr     = {Re_pipe:.2f}")
+print(f"Re_oeffnung = {Re_open:.2f}")
+
+Umax = np.interp(X, x, u_max_x)
+Rfree = np.interp(X, x, R_open_x)
+
+u = np.zeros_like(X, dtype=float)
+u[fluid] = Umax[fluid] * (1.0 - (Y[fluid] / Rfree[fluid]) ** 2)
+
+# ============================================================
+# v aus Kontinuitaet: dv/dy = -du/dx, v(0)=0 und v=0 an der Wand (kein Durchgriff)
+# ============================================================
+du_dx = np.gradient(u, x, axis=1)
+
+v = np.zeros_like(u)
+
+for j in range(nx):
+    Rj = R_open_x[j]
+    mask_j = fluid[:, j]  # nur dort integrieren, wo wirklich Fluid ist
+    yj = y[mask_j]
+    duj = du_dx[mask_j, j]
+
+    if len(yj) < 3:
+        continue
+
+    # positive Seite inkl. 0
+    y_pos = yj[yj >= 0.0]
+    du_pos = duj[yj >= 0.0]
+
+    if len(y_pos) < 2:
+        continue
+
+    v_pos = -cumtrapz_1d(du_pos, y_pos)  # v(0)=0
+
+    # Wand-Korrektur (impermeabel): v(y=R)=0
+    vR = v_pos[-1]
+    R_eff = y_pos[-1]
+    if R_eff > 0:
+        v_pos = v_pos - (y_pos / R_eff) * vR
+
+    # negative Seite (Odd-Symmetrie)
+    y_neg = yj[yj <= 0.0]
+    y_neg_abs = np.abs(y_neg)[::-1]  # 0..R
+    v_neg_abs = np.interp(y_neg_abs, y_pos, v_pos)
+    v_neg = -v_neg_abs[::-1]
+
+    # zusammenbauen in voller y-Spalte
+    v_col = np.zeros_like(y, dtype=float)
+    # Achtung: yj enthaelt neg + pos, aber ohne Doppel-0. Wir setzen direkt via Masken-Logik:
+    # Wir schreiben negativen Teil in y<=0, positiven in y>=0
+    v_col[(mask_j) & (y <= 0.0)] = v_neg
+    v_col[(mask_j) & (y >= 0.0)] = v_pos
+
+    v[:, j] = v_col
+
+# ausserhalb Fluid: v=0
+v[~fluid] = 0.0
+
+# ============================================================
+# Plot: Hintergrund |v| und Streamlines, plus Konturen (Rohrwand und Oeffnung)
+# ============================================================
+speed = np.sqrt(u**2 + v**2)
+
+plt.figure(figsize=(12, 4.2))
+plt.pcolormesh(X, Y, speed, shading="auto")
+plt.colorbar(label="|v| [m/s]")
+
+plt.streamplot(x, y, u, v, density=1.6, linewidth=0.9, arrowsize=0.9)
+
+# Rohrwand
+plt.plot(x,  np.full_like(x,  R_pipe), "k", linewidth=2.0)
+plt.plot(x,  np.full_like(x, -R_pipe), "k", linewidth=2.0)
+
+# "freie Oeffnung" als Kontur (wo die Platte blockt)
+R_open_plot = opening_radius_profile(x)
+plt.plot(x,  R_open_plot, "k--", linewidth=1.4)
+plt.plot(x, -R_open_plot, "k--", linewidth=1.4)
+
+plt.title("2D-Laengsschnitt: Rohrstroemung mit Orifice (Wand + Oeffnung, kein Durchgriff)")
+plt.xlabel("x [m]")
+plt.ylabel("y [m]")
+plt.xlim(0, L_pipe)
+plt.ylim(y_min, y_max)
+plt.tight_layout()
+plt.show()
