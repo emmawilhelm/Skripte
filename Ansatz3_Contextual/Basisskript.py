@@ -84,22 +84,47 @@ def build_velocity_field(
     R_geom[(x >= x1) & (x <= x2)] = R_orifice
 
     # --- 2) Effektiver Radius nur fürs Strömungsfeld (glatte Streamlines) ---
-    # Glättung soll von x_start bis x_end laufen
-    x_start = x1 - Lc            # 2.60 - 1.29 = 1.31 m
-    x_end = x1                   # 2.60 m
 
-    # Sigmoid-Gewichtung w(x) von 0 -> 1 über [x_start, x_end]
-    xm = 0.5 * (x_start + x_end)
-    L = (x_end - x_start)
+    # Kanten der Orifice-Platte
+    # x1 = xS - 0.5 * L_orifice   (existiert schon weiter oben)
+    # x2 = xS + 0.5 * L_orifice
 
-    eps = 0.01
-    k = (L / 2.0) / np.log((1.0 - eps) / eps)
+    # Kontraktion: 1.31 -> 2.60
+    x_c_start = x1 - Lc          # 1.31 m
+    x_c_end   = x1               # 2.60 m
 
-    w = logistic((x - xm) / k)
-    w[x <= x_start] = 0.0
-    w[x >= x_end] = 1.0
+    # Expansion: 3.40 -> 4.69
+    x_e_start = x2               # 3.40 m
+    x_e_end   = x2 + Lc          # 4.69 m
 
-    R_eff = R_pipe - w * (R_pipe - R_orifice)
+    def sigmoid_ramp(xarr: np.ndarray, a: float, b: float, eps_level: float = 0.01) -> np.ndarray:
+        xm = 0.5 * (a + b)
+        L = (b - a)
+        eps = float(eps_level)
+        k = (L / 2.0) / np.log((1.0 - eps) / eps)
+        w = logistic((xarr - xm) / k)
+        w[xarr <= a] = 0.0
+        w[xarr >= b] = 1.0
+        return w
+
+    # weights
+    w_c = sigmoid_ramp(x, x_c_start, x_c_end, eps_level=0.01)  # 0->1 (pipe->orifice)
+    w_e = sigmoid_ramp(x, x_e_start, x_e_end, eps_level=0.01)  # 0->1 (orifice->pipe)
+
+    # Build R_eff piecewise
+    R_eff = np.full_like(x, R_pipe)
+
+    # Kontraktion: R_pipe -> R_orifice
+    mask_contr = (x >= x_c_start) & (x <= x_c_end)
+    R_eff[mask_contr] = R_pipe - w_c[mask_contr] * (R_pipe - R_orifice)
+
+    # In der Orifice-Platte: konstant R_orifice
+    mask_orifice = (x >= x1) & (x <= x2)
+    R_eff[mask_orifice] = R_orifice
+
+    # Expansion: R_orifice -> R_pipe
+    mask_exp = (x >= x_e_start) & (x <= x_e_end)
+    R_eff[mask_exp] = R_orifice + w_e[mask_exp] * (R_pipe - R_orifice)
 
     # Local mean velocity from constant Q (auf Basis von R_eff!)
     A_x = np.pi * (R_eff ** 2)
@@ -221,7 +246,6 @@ def main():
 
     fig, ax = plt.subplots(figsize=(12, 4.8))
 
-    raise RuntimeError("BREAKPOINT: Wenn du das siehst, läuft der neue Code.")
     # -------------------------------------------------
     # 1) Rohrwand (konstant, gerade)
     # -------------------------------------------------
