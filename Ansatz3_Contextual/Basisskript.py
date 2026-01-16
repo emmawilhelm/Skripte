@@ -147,8 +147,9 @@ def build_velocity_field(
 
     # Punkte innerhalb der realen Wand, aber außerhalb des effektiven Radius würden sonst negative u liefern:
     outer_ring = inside & (np.abs(Y) > R_eff_mesh)
-    u[outer_ring] = 0.0
-
+    # kleines u, damit Streamlines nicht in 0-Zonen enden
+    u_mean_mesh = np.tile(u_mean_x, (ny, 1))
+    u[outer_ring] = 0.01 * u_mean_mesh[outer_ring]
 
     # du/dx (row-wise), ignoring NaNs outside
     du_dx = np.full_like(u, np.nan, dtype=float)
@@ -319,19 +320,22 @@ def main():
     cbar.set_label("|u| [m/s]")
 
     # Streamplot (fill masked with 0 just for plotting)
-    u_plot = np.where(u.mask, 0.0, u.data)
-    v_plot = np.where(v.mask, 0.0, v.data)
+    u_plot = u
+    v_plot = v
 
     x0 = 0.05
     ys = np.linspace(-R_pipe * 0.95, R_pipe * 0.95, 28)
     start_points = np.column_stack([np.full_like(ys, x0), ys])
 
     ax.streamplot(
-        X, Y, u_plot, v_plot,
+        X, Y, 
+        u_plot, v_plot,
         start_points=start_points,
         density=2.0,
         linewidth=0.8,
         arrowsize=1.1,
+        minlength=0.2,    # verhindert sehr kurze Abbrüche
+        maxlength=10.0,   # erlaubt lange Linien
         zorder=3
     )
 
