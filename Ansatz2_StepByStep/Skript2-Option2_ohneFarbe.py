@@ -134,7 +134,6 @@ ax.add_patch(lower_plate)
 ax.axvline(x_or, linestyle=":", linewidth=1, zorder=6)
 ax.text(x_or, R_out * 1.03, "x = 3.0 m (Messblende)", ha="center", va="bottom", zorder=6)
 
-
 # -----------------------------
 # OPTION 2: Streamlines mit geglättetem u(x) (Δx = 0.05 m)
 # - u(x) wird an x0 und x1 weich überblendet, damit v = -dpsi/dx definiert ist
@@ -197,39 +196,6 @@ fluid_mask = (fluid_mask & ~orifice_region) | fluid_mask_orifice
 
 Ug_plot = np.where(fluid_mask, Ug, np.nan)
 Vg_plot = np.where(fluid_mask, Vg, np.nan)
-
-# -----------------------------
-# Farbfeld: Geschwindigkeitsbetrag |u|
-# (fixe Skala: 0 .. u_orif)
-# -----------------------------
-speed = np.sqrt(Ug_plot**2 + Vg_plot**2)
-
-# Referenzwert für feste Farbskala (max. erwartete axiale Geschwindigkeit im Orifice)
-u_orif = fluid.Q / (np.pi * (d**2) / 4.0)
-
-c = ax.pcolormesh(
-    x_grid, y_grid, speed,
-    shading="auto",
-    cmap="viridis",
-    vmin=0.0,
-    vmax=u_orif,
-    alpha=0.75,
-    zorder=1
-)
-
-cb = plt.colorbar(c, ax=ax, pad=0.02)
-cb.set_label(r"$|\vec{u}|$ [m/s]")
-
-speed = np.sqrt(Ug_plot**2 + Vg_plot**2)
-
-c = ax.pcolormesh(
-    x_grid, y_grid, speed,
-    shading="auto",
-    alpha=0.7,   # Durchsichtigkeit, damit Geometrie/Streamlines sichtbar bleiben
-    zorder=1
-)
-cb = plt.colorbar(c, ax=ax, pad=0.02)
-cb.set_label("|u| [m/s]")
 
 ax.streamplot(
     x_grid, y_grid,

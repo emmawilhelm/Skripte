@@ -76,26 +76,54 @@ def build_velocity_field(
     y = np.linspace(-R_pipe, R_pipe, ny)
     X, Y = np.meshgrid(x, y)
 
-    # Smooth constriction indicator
-    g = smooth_top_hat_sigmoid(x, xS=xS, L_orifice=L_orifice, Lc=Lc, eps_level=0.01)
+    # --- 1) Abrupte Geometrie (Wand) ---
+    x1 = xS - 0.5 * L_orifice   # 2.60 m
+    x2 = xS + 0.5 * L_orifice   # 3.40 m
 
-    # Radius profile
-    R_x = R_pipe - g * (R_pipe - R_orifice)
+    R_geom = np.full_like(x, R_pipe)
+    R_geom[(x >= x1) & (x <= x2)] = R_orifice
 
-    # Local mean velocity from constant Q
-    A_x = np.pi * (R_x ** 2)
+    # --- 2) Effektiver Radius nur fürs Strömungsfeld (glatte Streamlines) ---
+    # Glättung soll von x_start bis x_end laufen
+    x_start = x1 - Lc            # 2.60 - 1.29 = 1.31 m
+    x_end = x1                   # 2.60 m
+
+    # Sigmoid-Gewichtung w(x) von 0 -> 1 über [x_start, x_end]
+    xm = 0.5 * (x_start + x_end)
+    L = (x_end - x_start)
+
+    eps = 0.01
+    k = (L / 2.0) / np.log((1.0 - eps) / eps)
+
+    w = logistic((x - xm) / k)
+    w[x <= x_start] = 0.0
+    w[x >= x_end] = 1.0
+
+    R_eff = R_pipe - w * (R_pipe - R_orifice)
+
+    # Local mean velocity from constant Q (auf Basis von R_eff!)
+    A_x = np.pi * (R_eff ** 2)
     u_mean_x = Q / A_x
     u_max_x = 2.0 * u_mean_x
 
     # Broadcast to mesh
-    R_mesh = np.tile(R_x, (ny, 1))
+    R_geom_mesh = np.tile(R_geom, (ny, 1))
+    R_eff_mesh = np.tile(R_eff, (ny, 1))
     u_max_mesh = np.tile(u_max_x, (ny, 1))
 
-    inside = np.abs(Y) <= R_mesh
+    # Domäne (Maske) aus *realer* Geometrie
+    inside = np.abs(Y) <= R_geom_mesh
 
-    # Axial velocity (parabolic inside)
+    # Axial velocity:
+    # - innerhalb realer Geometrie: definiert
+    # - Poiseuille bezogen auf R_eff (glatte Feld-Änderung)
     u = np.full_like(X, np.nan, dtype=float)
-    u[inside] = u_max_mesh[inside] * (1.0 - (Y[inside] / R_mesh[inside]) ** 2)
+    u[inside] = u_max_mesh[inside] * (1.0 - (Y[inside] / R_eff_mesh[inside]) ** 2)
+
+    # Punkte innerhalb der realen Wand, aber außerhalb des effektiven Radius würden sonst negative u liefern:
+    outer_ring = inside & (np.abs(Y) > R_eff_mesh)
+    u[outer_ring] = 0.0
+
 
     # du/dx (row-wise), ignoring NaNs outside
     du_dx = np.full_like(u, np.nan, dtype=float)
@@ -149,7 +177,7 @@ def build_velocity_field(
         "Re_orifice": Re_orifice,
     }
 
-    return X, Y, u_masked, v_masked, R_x, diag
+    return X, Y, u_masked, v_masked, R_geom, R_eff, diag
 
 
 def main():
@@ -167,7 +195,7 @@ def main():
     L_orifice = 0.80       # m (Störstellenlänge t)
     Lc = 1.29              # m (0.3*D = 1.29 m), smoothing length per flank
 
-    X, Y, u, v, R_x, diag = build_velocity_field(
+    X, Y, u, v, R_geom, R_eff, diag = build_velocity_field(
         D_pipe=D_pipe,
         L_pipe=L_pipe,
         d_orifice=d_orifice,
@@ -193,9 +221,39 @@ def main():
 
     fig, ax = plt.subplots(figsize=(12, 4.8))
 
-    # Geometry outline
-    ax.plot(x,  R_x, "k-", linewidth=1.6)
-    ax.plot(x, -R_x, "k-", linewidth=1.6)
+    raise RuntimeError("BREAKPOINT: Wenn du das siehst, läuft der neue Code.")
+    # -------------------------------------------------
+    # 1) Rohrwand (konstant, gerade)
+    # -------------------------------------------------
+    R_pipe = D_pipe / 2.0
+    ax.plot([0, L_pipe], [ R_pipe,  R_pipe], "k-", linewidth=1.8)
+    ax.plot([0, L_pipe], [-R_pipe, -R_pipe], "k-", linewidth=1.8)
+
+    # -------------------------------------------------
+    # 2) Orifice-Platte (schwarze Fläche mit Öffnung)
+    #    -> kommt DIREKT NACH der Rohrwand
+    # -------------------------------------------------
+    x1 = xS - 0.5 * L_orifice   # 2.60 m
+    x2 = xS + 0.5 * L_orifice   # 3.40 m
+    R_orifice = d_orifice / 2.0
+
+    # oberer Plattenteil
+    ax.fill_between(
+        [x1, x2],
+        [R_pipe, R_pipe],
+        [R_orifice, R_orifice],
+        color="black",
+        zorder=5
+    )
+
+    # unterer Plattenteil
+    ax.fill_between(
+        [x1, x2],
+        [-R_orifice, -R_orifice],
+        [-R_pipe, -R_pipe],
+        color="black",
+        zorder=5
+    )
 
     # Streamplot (fill masked with 0 just for plotting)
     u_plot = np.where(u.mask, 0.0, u.data)
@@ -208,7 +266,7 @@ def main():
         arrowsize=1.1
     )
 
-    ax.set_title("Rohrströmung mit Orifice (Sigmoid-Glättung, Poiseuille + Kontinuität)")
+    ax.set_title("Rohrströmung mit Störstelle (Sigmoid-Glättung, Poiseuille + Kontinuität)")
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y (radial) [m]")
     ax.set_xlim(0, L_pipe)

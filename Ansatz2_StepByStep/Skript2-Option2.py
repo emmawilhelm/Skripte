@@ -81,7 +81,7 @@ ax.set_ylim(-R_out * 1.15, R_out * 1.15)
 ax.set_aspect("equal", adjustable="box")
 ax.set_xlabel("x [m]")
 ax.set_ylabel("y [m] (radiale Richtung, Schnitt durch Achse)")
-ax.set_title("2D-Schnitt (achsensymmetrisch) – Rohr + Messblende + Fluid + Geschwindigkeitsvektoren")
+ax.set_title("2D-Schnitt (achsensymmetrisch) – Rohr + Messblende + newtonsches Fluid + Geschwindigkeitsfeld +Stromlinien")
 ax.grid(True, linewidth=0.5, alpha=0.4)
 
 # -----------------------------
@@ -134,59 +134,116 @@ ax.add_patch(lower_plate)
 ax.axvline(x_or, linestyle=":", linewidth=1, zorder=6)
 ax.text(x_or, R_out * 1.03, "x = 3.0 m (Messblende)", ha="center", va="bottom", zorder=6)
 
+
 # -----------------------------
-# Streamlines statt Quiver
+# OPTION 2: Streamlines mit geglättetem u(x) (Δx = 0.05 m)
+# - u(x) wird an x0 und x1 weich überblendet, damit v = -dpsi/dx definiert ist
+# - psi(x,y) = u(x)*y
+# - u,v werden aus psi abgeleitet: u = dpsi/dy, v = -dpsi/dx
+# - Streamlines werden in Wandnähe maskiert (eps), damit keine Linie die Wand berührt.
 # -----------------------------
+nx, ny = 350, 180
+x_grid = np.linspace(0.0, L, nx)
+y_grid = np.linspace(-R, R, ny)
+Xg, Yg = np.meshgrid(x_grid, y_grid)
 
-# 1) Gitter definieren
-nx, ny = 300, 140
-xg = np.linspace(0.0, L, nx)
-yg = np.linspace(-R, R, ny)
-XX, YY = np.meshgrid(xg, yg)
+# Sicherheitsabstand zu Wänden
+eps = 0.02  # [m]
 
-# 2) "Freier Radius" als Funktion von x (sprunghaft -> besser weich machen)
-#    damit Streamlines nicht an einer Sprungstelle "knicken".
-eps = 0.03  # Glättungslänge [m] (nur optisch)
-def smooth_step(x, a, b, w):
-    # ~1 in [a,b], sonst ~0 (weiche Kanten)
-    return 0.5*(np.tanh((x-a)/w) - np.tanh((x-b)/w))
+# Glättungsbreite
+dx_smooth = 0.05  # [m] wie von dir vorgegeben
 
-in_or = smooth_step(XX, x0, x1, eps)           # 0..1
-R_free = (1.0 - in_or) * R + in_or * r_or      # freier Radius (weich)
+A_pipe = np.pi * (D**2) / 4.0
+A_orif = np.pi * (d**2) / 4.0
+u_pipe = fluid.Q / A_pipe
+u_orif = fluid.Q / A_orif
 
-# 3) Mittlere Geschwindigkeit u_mean(x) (für Visualisierung)
-#    (Hier weiter mit deiner axisymmetrischen Fläche A = pi R^2)
-A = np.pi * (R_free**2)
-u_mean = fluid.Q / A
+def smooth_step(x, x_center, width):
+    """
+    Glatter Übergang 0->1 via tanh.
+    width ~ Übergangshalbbreite; größer -> weicher.
+    """
+    return 0.5 * (1.0 + np.tanh((x - x_center) / width))
 
-# 4) Stromfunktion psi(x,y) wählen
-#    Parabolisches Profil in y, das an der Wand auf 0 geht:
-#    u = u_mean*(1 - (y/R_free)^2)
-psi = u_mean * (YY - (YY**3) / (3.0 * (R_free**2) + 1e-12))
+# u(x): von Rohr zu Orifice bei x0, zurück bei x1
+# s0 steigt bei x0 von 0->1, s1 steigt bei x1 von 0->1
+s0 = smooth_step(x_grid, x0, dx_smooth)
+s1 = smooth_step(x_grid, x1, dx_smooth)
 
-# 5) u,v aus psi ableiten (numerisch)
-dx = xg[1] - xg[0]
-dy = yg[1] - yg[0]
-dpsi_dy, dpsi_dx = np.gradient(psi, dy, dx)   # Achtung Reihenfolge: (y,x)
-Ufield = dpsi_dy
-Vfield = -dpsi_dx
+# In Orifice-Plateau: s_plateau ~ 1 zwischen x0 und x1, ~0 außerhalb
+s_plateau = np.clip(s0 - s1, 0.0, 1.0)
 
-# 6) Feste Bereiche maskieren: außerhalb Fluid / Platte
-solid = (np.abs(YY) > R_free)  # außerhalb freier Querschnitt
-# zusätzlich: im Plattenbereich nur |y|<=r_or zulassen (hart)
-solid |= ((XX >= x0) & (XX <= x1) & (np.abs(YY) > r_or))
+# u(x) geglättet
+u1d = u_pipe + (u_orif - u_pipe) * s_plateau  # 1D
 
-Uplot = np.ma.array(Ufield, mask=solid)
-Vplot = np.ma.array(Vfield, mask=solid)
+# Stromfunktion psi(x,y) = u(x)*y
+psi = np.outer(y_grid, u1d)  # shape (ny, nx)
 
-# 7) Streamplot zeichnen
+# Ableitungen (numerisch) -> u,v
+dy = y_grid[1] - y_grid[0]
+dx = x_grid[1] - x_grid[0]
+
+# np.gradient gibt Ableitungen entlang Achsen:
+dpsi_dy, dpsi_dx = np.gradient(psi, dy, dx, edge_order=2)
+
+Ug = dpsi_dy            # u = ∂psi/∂y
+Vg = -dpsi_dx           # v = -∂psi/∂x
+
+# Fluidmaske (inkl. "nicht an Wand berühren")
+fluid_mask = (np.abs(Yg) < (R - eps))
+orifice_region = (Xg >= x0) & (Xg <= x1)
+fluid_mask_orifice = orifice_region & (np.abs(Yg) < (r_or - eps))
+fluid_mask = (fluid_mask & ~orifice_region) | fluid_mask_orifice
+
+Ug_plot = np.where(fluid_mask, Ug, np.nan)
+Vg_plot = np.where(fluid_mask, Vg, np.nan)
+
+# -----------------------------
+# Farbfeld: laminares parabolisches Profil im Querschnitt
+# (Streamlines bleiben aus Ug_plot/Vg_plot wie bisher!)
+# -----------------------------
+# mittlere Geschwindigkeit vm(x) = Q/A(x) -> hier u1d (geglättet)
+# maximale Geschwindigkeit vmax(x) = 2*vm(x)
+vmax_1d = 2.0 * u1d  # u1d ist bereits geglättet und entspricht vm(x)
+
+# freier Radius ya(x): im Rohr R, im Orifice r_or, geglättet passend zu s_plateau
+ya_1d = R + (r_or - R) * s_plateau  # geglättet wie dein u1d
+
+Vmax = np.tile(vmax_1d, (ny, 1))
+Ya   = np.tile(ya_1d,   (ny, 1))
+
+# Parabolisches Profil: u_par(x,y) = vmax(x) * (1 - (y/ya(x))^2)
+u_par = Vmax * (1.0 - (Yg / Ya)**2)
+u_par = np.clip(u_par, 0.0, None)
+
+# Maskieren (damit keine Farbe an Wänden / in der Platte erscheint)
+u_par_plot = np.where(fluid_mask, u_par, np.nan)
+
+# Feste Farbskala:
+# ACHTUNG: Für Parabel ist der Maximalwert 2*vm -> also vmax im Orifice
+vmax_orif = 2.0 * u_orif
+
+c = ax.pcolormesh(
+    x_grid, y_grid, u_par_plot,
+    shading="auto",
+    cmap="viridis",
+    vmin=0.0,
+    vmax=vmax_orif,
+    alpha=0.75,
+    zorder=1
+)
+
+cb = plt.colorbar(c, ax=ax, pad=0.02)
+cb.set_label(r"$|\vec{u}|$ [m/s]")
+
+
 ax.streamplot(
-    xg, yg, Uplot, Vplot,
-    density=1.6,      # mehr/weniger Linien
-    linewidth=1.2,
-    arrowsize=1.2,
-    minlength=0.05,
-    zorder=9
+    x_grid, y_grid,
+    Ug_plot, Vg_plot,
+    density=1.2,
+    linewidth=1.0,
+    arrowsize=1.0,
+    zorder=12
 )
 
 # -----------------------------
