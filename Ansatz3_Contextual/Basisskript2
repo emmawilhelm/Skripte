@@ -196,6 +196,33 @@ plt.colorbar(label="|v| [m/s]")
 
 plt.streamplot(x, y, u, v, density=1.6, linewidth=0.9, arrowsize=0.9)
 
+# ============================================================
+# Sichtbare Darstellung der Störstelle (physikalische Platte)
+# ============================================================
+x_plate_min = xS - t_orifice / 2.0
+x_plate_max = xS + t_orifice / 2.0
+R_orifice = d_orifice / 2.0
+
+# Obere Plattenhälfte
+plt.fill_between(
+    [x_plate_min, x_plate_max],
+    [R_orifice, R_orifice],
+    [R_pipe, R_pipe],
+    color="dimgray",
+    alpha=0.9,
+    zorder=10
+)
+
+# Untere Plattenhälfte
+plt.fill_between(
+    [x_plate_min, x_plate_max],
+    [-R_orifice, -R_orifice],
+    [-R_pipe, -R_pipe],
+    color="dimgray",
+    alpha=0.9,
+    zorder=10
+)
+
 # Rohrwand
 plt.plot(x,  np.full_like(x,  R_pipe), "k", linewidth=2.0)
 plt.plot(x,  np.full_like(x, -R_pipe), "k", linewidth=2.0)
