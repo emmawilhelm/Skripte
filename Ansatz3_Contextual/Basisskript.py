@@ -161,29 +161,50 @@ def build_velocity_field(
         i0, i1 = idx[0], idx[-1]
         du_dx[j, i0:i1 + 1] = np.gradient(row[i0:i1 + 1], x[i0:i1 + 1])
 
-    # v from continuity with symmetry v(x,0)=0
+    # ------------------------------------------------------------
+    # v aus Kontinuität: dv/dy = -du/dx
+    # Randbedingung: keine Durchströmung an den Wänden -> v=0 an top/bottom
+    # Vorgehen:
+    #  - integriere von oben nach unten mit v(top)=0  -> v_top
+    #  - integriere von unten nach oben mit v(bottom)=0 -> v_bot
+    #  - mitteln: v = 0.5*(v_top + v_bot)
+    # ------------------------------------------------------------
     v = np.full_like(u, np.nan, dtype=float)
-    j0 = int(np.argmin(np.abs(y - 0.0)))
-    y_pos = y[j0:]
 
     for i in range(nx):
-        col = du_dx[j0:, i]
-        if np.count_nonzero(np.isfinite(col)) < 2:
+        # gültige Punkte in dieser x-Spalte (innerhalb Geometrie)
+        valid = np.isfinite(du_dx[:, i]) & inside[:, i]
+        idx = np.where(valid)[0]
+        if idx.size < 2:
             continue
-        v_col = np.zeros_like(col)
-        for k in range(1, len(y_pos)):
-            if np.isfinite(col[k]) and np.isfinite(col[k - 1]):
-                dy = y_pos[k] - y_pos[k - 1]
-                v_col[k] = v_col[k - 1] - 0.5 * (col[k] + col[k - 1]) * dy
-            else:
-                v_col[k] = np.nan
-        v[j0:, i] = v_col
 
-    # Mirror antisymmetrically to y<0: v(x,-y) = -v(x,y)
-    for j in range(0, j0):
-        j_mirror = j0 + (j0 - j)
-        if j_mirror < ny:
-            v[j, :] = -v[j_mirror, :]
+        j_top = idx[-1]     # größtes y (oben)
+        j_bot = idx[0]      # kleinstes y (unten)
+
+        # 1) Integration von oben nach unten: v(top)=0
+        v_top = np.full(ny, np.nan, dtype=float)
+        v_top[j_top] = 0.0
+        for j in range(j_top - 1, j_bot - 1, -1):
+            if valid[j] and valid[j + 1]:
+                dy = y[j + 1] - y[j]  # >0
+                # v(j) = v(j+1) + ∫_{y_j}^{y_{j+1}} du/dx dy  (weil dv/dy=-du/dx)
+                v_top[j] = v_top[j + 1] + 0.5 * (du_dx[j, i] + du_dx[j + 1, i]) * dy
+
+        # 2) Integration von unten nach oben: v(bottom)=0
+        v_bot = np.full(ny, np.nan, dtype=float)
+        v_bot[j_bot] = 0.0
+        for j in range(j_bot + 1, j_top + 1):
+            if valid[j] and valid[j - 1]:
+                dy = y[j] - y[j - 1]  # >0
+                # v(j) = v(j-1) - ∫_{y_{j-1}}^{y_j} du/dx dy
+                v_bot[j] = v_bot[j - 1] - 0.5 * (du_dx[j, i] + du_dx[j - 1, i]) * dy
+
+         # 3) Mittelwert, um beide Wandbedingungen "gleich" zu behandeln
+        v[:, i] = 0.5 * (v_top + v_bot)
+
+    # Optional: numerisches Rauschen sehr nah an Wänden abschwächen (kann helfen)
+    # v[np.abs(v) < 1e-12] = 0.0
+
 
     # Mask outside
     u_masked = np.ma.array(u, mask=~inside)
@@ -301,9 +322,14 @@ def main():
     u_plot = np.where(u.mask, 0.0, u.data)
     v_plot = np.where(v.mask, 0.0, v.data)
 
+    x0 = 0.05
+    ys = np.linspace(-R_pipe * 0.95, R_pipe * 0.95, 28)
+    start_points = np.column_stack([np.full_like(ys, x0), ys])
+
     ax.streamplot(
         X, Y, u_plot, v_plot,
-        density=1.8,
+        start_points=start_points,
+        density=2.0,
         linewidth=0.8,
         arrowsize=1.1,
         zorder=3
